@@ -4,7 +4,6 @@ __pycache__/
 .git/
 .ipynb_checkpoints/
 *.pyc
-*.pyo
 *.csv
 *.xls
 *.xlsx

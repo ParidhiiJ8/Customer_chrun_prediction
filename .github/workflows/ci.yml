@@ -1,0 +1,125 @@
+name: Customer Churn ML CI
+
+on:
+  push:
+    branches:
+      - master
+
+  pull_request:
+    branches:
+      - master
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout repository
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # 2. Setup Python
+      - name: Setup Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+
+      # 3. Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+
+      # 4. Run automated tests
+      - name: Run pytest
+        run: |
+          python -m pytest -v
+
+      # 5. Build Docker image
+      - name: Build Docker image
+        run: |
+          docker build -t customer-churn-api:ci .
+
+      # 6. Run Docker container
+      - name: Start Docker container
+        run: |
+          docker run -d \
+            --name customer-churn-api-ci \
+            -p 8000:8000 \
+            customer-churn-api:ci
+
+      # 7. Check health endpoint
+      - name: Test health endpoint
+        run: |
+          for i in $(seq 1 30); do
+            if curl --fail --silent \
+              http://127.0.0.1:8000/health \
+              -o /tmp/health.json; then
+
+              cat /tmp/health.json
+
+              python -c '
+          import json
+
+          with open("/tmp/health.json") as f:
+              data = json.load(f)
+
+          assert data["status"] == "ok"
+          assert data["model_loaded"] is True
+
+          print("Health check passed!")
+          '
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          docker logs customer-churn-api-ci
+          exit 1
+
+      # 8. Test prediction endpoint
+      - name: Test prediction endpoint
+        run: |
+          curl --fail --silent --show-error \
+            -X POST \
+            http://127.0.0.1:8000/predict \
+            -H "Content-Type: application/json" \
+            --data-binary @tests/sample_payload.json \
+            --output /tmp/prediction.json
+
+          cat /tmp/prediction.json
+
+          python -c '
+          import json
+
+          with open("/tmp/prediction.json") as f:
+              result = json.load(f)
+
+          assert result["prediction"] in ["Yes", "No"]
+
+          probability = result["churn_probability"]
+
+          assert 0.0 <= probability <= 1.0
+
+          print("Prediction test passed!")
+          '
+
+      # 9. Show logs if an earlier step fails
+      - name: Show container logs on failure
+        if: failure()
+        run: |
+          docker logs customer-churn-api-ci || true
+
+      # 10. Cleanup
+      - name: Remove Docker container
+        if: always()
+        run: |
+          docker rm -f customer-churn-api-ci || true

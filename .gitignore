@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.env
+.ipynb_checkpoints/
+*.pyc
+*.csv
+*.xls
+*.xlsx
